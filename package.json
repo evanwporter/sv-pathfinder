@@ -43,7 +43,10 @@
         },
         "sv-pathfinder.compiler": {
           "type": "string",
-          "enum": ["slang-server", "Surelog"],
+          "enum": [
+            "slang-server",
+            "Surelog"
+          ],
           "default": "slang-server",
           "markdownDescription": "Compiler backend to parse and elaborate the `.f` files.\nPrerequisites:\n - [slang-server](https://github.com/hudson-trading/slang-server): Requires the VS Code extension [slang-server: Verilog/SystemVerilog LSP](https://marketplace.visualstudio.com/items?itemName=Hudson-River-Trading.vscode-slang) to be installed and properly configured.\n - [Surelog](https://github.com/chipsalliance/Surelog): Requires Surelog to be installed. Or specify surelog path in setting: `#sv-pathfinder.surelogPath#`.",
           "markdownEnumDescriptions": [
@@ -333,14 +336,14 @@
   "scripts": {
     "vscode:prepublish": "npm run package",
     "compile-addon": "node-gyp rebuild",
-    "compile": "npm run compile-addon && npm run check-types && npm run lint && node esbuild.js",
+    "compile": "npm run check-types && npm run lint && node esbuild.js",
+    "package": "npm run check-types && npm run lint && node esbuild.js --production",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
-    "package": "npm run compile-addon && npm run check-types && npm run lint && node esbuild.js --production",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
-    "pretest": "npm run compile-tests && npm run compile && npm run lint",
     "check-types": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vscode-test"
@@ -363,7 +366,6 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "kuzu": "^0.9.0",
     "web-tree-sitter": "^0.25.6"
   }
 }

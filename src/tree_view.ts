@@ -1,12 +1,6 @@
 import * as vscode from "vscode";
 import path from "path";
-import * as fs from "fs/promises";
-import * as os from "os";
-import * as cp from "child_process";
 import * as slang from "./slang_server/SlangInterface";
-
-// Must use require instead of import somehow
-let kuzu: any | undefined; // require("kuzu");
 
 // Scopes
 const moduleIcon = new vscode.ThemeIcon(
@@ -897,537 +891,6 @@ export abstract class DesignItem extends vscode.TreeItem {
   }
 }
 
-// #region KuzuDesignItem
-class KuzuDesignItem extends DesignItem {
-  // Kuzu database
-  private db?: any /*kuzu.Database*/ | undefined;
-
-  public async load(): Promise<boolean> {
-    if (!kuzu) {
-      try {
-        kuzu = require("kuzu");
-      } catch (error) {
-        vscode.window.showErrorMessage(
-          "Failed to load Kuzu database addon: " + error,
-        );
-        return false;
-      }
-    }
-    try {
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: "Reading design database: " + this.resourceUri.fsPath,
-          cancellable: false,
-        },
-        async () => {
-          this.db = new kuzu.Database(
-            this.resourceUri.fsPath,
-            0,
-            true,
-            true,
-            0,
-          );
-          const conn = new kuzu.Connection(this.db);
-          if (
-            vscode.workspace
-              .getConfiguration("sv-pathfinder")
-              .get<boolean>("showInstancesView", true)
-          ) {
-            await this.loadModuleDefs(conn);
-          }
-          await this.loadTopModules(conn);
-        },
-      );
-      return true;
-    } catch (error) {
-      vscode.window.showErrorMessage(
-        "Failed to load design database: " + error,
-      );
-      return false;
-    }
-  }
-
-  private async loadModuleDefs(conn: any /*kuzu.Connection*/) {
-    const query = `MATCH (m:ModuleDef) RETURN m;`;
-    const queryResult = await conn.query(query);
-    const moduleDefs = await queryResult.getAll();
-    for (const moduleDef of moduleDefs) {
-      const scope = createScope(
-        moduleDef.m.name,
-        "moduledef",
-        moduleDef.m.file,
-        moduleDef.m.lineNo,
-        -1,
-        moduleDef.m.name,
-        "moduleDefItem",
-        undefined,
-        undefined,
-      );
-      // scope.description = moduleDef.m.file;
-      this.moduleInstances.push(scope);
-    }
-  }
-
-  private async loadTopModules(conn: any /*kuzu.Connection*/) {
-    const query = `MATCH (i:Instance) WHERE i.isTopModule = true RETURN i;`;
-    const queryResult = await conn.query(query);
-    const topModules = await queryResult.getAll();
-    for (const topModule of topModules) {
-      const moduleName =
-        (await this.getModuleName(conn, topModule.i.fullName)) || "unknown";
-      const scope = createScope(
-        topModule.i.fullName,
-        "module",
-        topModule.i.file,
-        topModule.i.lineNo,
-        -1,
-        moduleName,
-        "scopeItem",
-        undefined,
-        undefined,
-      );
-      scope.description = moduleName;
-      this.treeData.push(scope);
-    }
-  }
-
-  private async getModuleName(
-    conn: any /*kuzu.Connection*/,
-    instanceName: string,
-  ): Promise<string | undefined> {
-    const query = `MATCH (m:ModuleDef)-[:instantiate]->(i:Instance {fullName: "${instanceName}"}) RETURN m LIMIT 1;`;
-    const queryResult = await conn.query(query);
-    const moduleDefs = await queryResult.getAll();
-    for (const moduleDef of moduleDefs) {
-      return moduleDef.m.name;
-    }
-    return undefined;
-  }
-
-  public async getChildrenExternal(
-    element: NetlistItem | undefined,
-  ): Promise<NetlistItem[]> {
-    if (!element) {
-      return this.treeData; // Returns top-level netlist items
-    }
-    if (element.children.length > 0) {
-      return element.children; // Returns cached children
-    }
-    const [subScopes, variables] = await Promise.all([
-      this.getSubScopes(element),
-      this.getVariables(element),
-    ]);
-    element.children = [...subScopes, ...variables];
-    return element.children;
-  }
-
-  private async getSubScopes(element: NetlistItem): Promise<NetlistItem[]> {
-    const conn = new kuzu.Connection(this.db);
-    const query = `MATCH (i:Instance {fullName: "${element.fullName}"})-[:subInstance]->(sub_i:Instance) RETURN sub_i;`;
-    const queryResult = await conn.query(query);
-    const subInstances = await queryResult.getAll();
-    const result: NetlistItem[] = [];
-    for (const subInstance of subInstances) {
-      const moduleName =
-        (await this.getModuleName(conn, subInstance.sub_i.fullName)) ||
-        "unknown";
-      const scope = createScope(
-        subInstance.sub_i.fullName,
-        "module",
-        subInstance.sub_i.file,
-        subInstance.sub_i.lineNo,
-        -1,
-        moduleName,
-        "scopeItem",
-        element,
-        undefined,
-      );
-      scope.description = moduleName;
-      result.push(scope);
-    }
-    return result;
-  }
-
-  private async getVariables(element: NetlistItem): Promise<NetlistItem[]> {
-    const conn = new kuzu.Connection(this.db);
-    const query = `MATCH (i:Instance {fullName: "${element.fullName}"})-[:Var]->(v:Variable) RETURN v;`;
-    const queryResult = await conn.query(query);
-    const vars = await queryResult.getAll();
-    const result: NetlistItem[] = [];
-    for (const variable of vars) {
-      const v = createVar(
-        variable.v.fullName,
-        variable.v.type,
-        variable.v.width,
-        variable.v.file,
-        variable.v.lineNo,
-        -1,
-        element.moduleName,
-        "varItem",
-        element,
-      );
-      result.push(v);
-    }
-    return result;
-  }
-
-  public async getDriversAndLoadsExternal(element: NetlistItem): Promise<void> {
-    if (element.drivers.length > 0 || element.loads.length > 0) {
-      return;
-    }
-    const conn = new kuzu.Connection(this.db);
-    const query = `MATCH (v:Variable {fullName: "${element.fullName}"})-[:driver]->(dvr:Assignment) RETURN dvr;`;
-    const queryResult = await conn.query(query);
-    const drivers = await queryResult.getAll();
-    // console.log(drivers);
-    for (const driver of drivers) {
-      const dvr = createVar(
-        driver.dvr.fullName,
-        "driver",
-        0,
-        driver.dvr.file,
-        driver.dvr.lineNo,
-        -1,
-        "TODO",
-        "driverItem",
-        element,
-      );
-      // console.log(driver.dvr);
-      element.drivers.push(dvr);
-    }
-
-    const query2 = `MATCH (v:Variable {fullName: "${element.fullName}"})-[:load]->(ld:Assignment) RETURN ld;`;
-    const queryResult2 = await conn.query(query2);
-    const loads = await queryResult2.getAll();
-    // console.log(loads);
-    for (const load of loads) {
-      const ld = createVar(
-        load.ld.fullName,
-        "load",
-        0,
-        load.ld.file,
-        load.ld.lineNo,
-        -1,
-        "TODO",
-        "loadItem",
-        element,
-      );
-      // console.log(load.ld);
-      element.loads.push(ld);
-    }
-  }
-
-  public async getModuleInstancesExternal(
-    element: NetlistItem | undefined,
-  ): Promise<NetlistItem[]> {
-    if (!element) {
-      return this.moduleInstances;
-    }
-    if (element.children.length > 0) {
-      return element.children; // Returns cached children
-    }
-    element.children = await this.loadModuleInstances(element);
-    return element.children;
-  }
-
-  private async loadModuleInstances(
-    element: NetlistItem,
-  ): Promise<NetlistItem[]> {
-    const conn = new kuzu.Connection(this.db);
-    const query = `MATCH (m:ModuleDef {name: "${element.fullName}"})-[:instantiate]->(i:Instance) RETURN m,i;`;
-    const queryResult = await conn.query(query);
-    const instances = await queryResult.getAll();
-    const result: NetlistItem[] = [];
-    for (const instance of instances) {
-      const scope = createVar(
-        instance.i.fullName,
-        "instance",
-        0,
-        instance.i.file,
-        instance.i.lineNo,
-        -1,
-        instance.m.name,
-        "instanceItem",
-        element,
-      );
-      // scope.description = instance.m.name;
-      result.push(scope);
-    }
-    return result;
-  }
-
-  async getDefinitionFileLocation(
-    element: NetlistItem,
-  ): Promise<{ filePath: string; lineNumber: number; columnNumber: number }> {
-    let filePath = element.sourceFile;
-    let lineNumber = element.lineNumber;
-    let columnNumber = element.columnNumber;
-
-    if (element.contextValue === "scopeItem") {
-      // Find the module definition in moduleInstances
-      const moduleName = element.moduleName;
-      const moduleInstances = this.getModuleInstances();
-      let index = moduleInstances.findIndex(
-        (module) => module.fullName === moduleName,
-      );
-      if (index < 0) {
-        console.log("Cannot find module definition for " + moduleName); // Should not happen
-      } else {
-        filePath = moduleInstances[index].sourceFile;
-        lineNumber = moduleInstances[index].lineNumber;
-        columnNumber = moduleInstances[index].columnNumber;
-      }
-    } else if (element.contextValue === "instanceItem") {
-      // The parent of instanceItem is the moduleDef, so use its sourceFile and lineNumber
-      filePath = element.parent!.sourceFile;
-      lineNumber = element.parent!.lineNumber;
-      columnNumber = element.parent!.columnNumber;
-    }
-
-    return { filePath, lineNumber, columnNumber };
-  }
-
-  public async unload(): Promise<void> {
-    this.unloadTreeData();
-    if (this.db) {
-      await this.db.close();
-      this.db = undefined;
-    }
-  }
-}
-
-// #region UhdmDesignItem
-class UhdmDesignItem extends DesignItem {
-  private designId = -1; // Used to identify the design in UHDM addon
-  public uhdmAddon?: any | undefined; // TODO(heyfey): make it private
-
-  public async load(): Promise<boolean> {
-    try {
-      this.uhdmAddon = require("../build/Release/uhdm_addon.node");
-    } catch (error) {
-      vscode.window.showErrorMessage("Failed to load UHDM addon: " + error);
-      return false;
-    }
-    try {
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: "Reading design database: " + this.resourceUri.fsPath,
-          cancellable: false,
-        },
-        async () => {
-          this.designId = await this.uhdmAddon.loadDesign(
-            this.resourceUri.fsPath,
-          );
-          if (
-            vscode.workspace
-              .getConfiguration("sv-pathfinder")
-              .get<boolean>("showInstancesView", true)
-          ) {
-            // Consider remove "await" for large designs, but:
-            //   1. Need to make sure loadModuleDefs is finished before selectInstance called
-            //   2. Need to refresh moduleInstancesTreeProvider after loadModuleDefs is finished
-            await this.loadModuleDefs();
-          }
-          await this.loadTopModules();
-        },
-      );
-      return true;
-    } catch (error) {
-      vscode.window.showErrorMessage(
-        "Failed to load design database: " + error,
-      );
-      return false;
-    }
-  }
-
-  private async loadTopModules() {
-    const topModules = await this.uhdmAddon.getTopModules(this.designId);
-    for (const topModule of topModules) {
-      const defName = topModule.defName.replace("work@", ""); // remove prefix for UHDM
-      const scope = createScope(
-        topModule.name,
-        "module",
-        topModule.file,
-        topModule.line,
-        topModule.column,
-        defName,
-        "scopeItem",
-        undefined,
-        topModule.handle,
-      );
-      scope.description = defName;
-      this.treeData.push(scope);
-    }
-  }
-
-  public async getChildrenExternal(
-    element: NetlistItem | undefined,
-  ): Promise<NetlistItem[]> {
-    if (!element) {
-      return this.treeData; // Returns top-level netlist items
-    }
-    if (element.children.length > 0) {
-      return element.children; // Returns cached children
-    }
-    const [subScopes, variables] = await Promise.all([
-      this.getSubScopes(element),
-      this.getVariables(element),
-    ]);
-    element.children = [...subScopes, ...variables];
-    return element.children;
-  }
-
-  private async getSubScopes(element: NetlistItem): Promise<NetlistItem[]> {
-    const subScopes = await this.uhdmAddon.getSubScopes(element.handle);
-    const result: NetlistItem[] = [];
-    for (const subScope of subScopes) {
-      const defName = subScope.defName.replace("work@", ""); // remove prefix for UHDM
-      const scope = createScope(
-        subScope.name,
-        subScope.type,
-        subScope.file,
-        subScope.line,
-        subScope.column,
-        defName,
-        "scopeItem",
-        element,
-        subScope.handle,
-      );
-      scope.description = defName;
-      result.push(scope);
-    }
-    return result;
-  }
-
-  private async getVariables(element: NetlistItem): Promise<NetlistItem[]> {
-    const vars = await this.uhdmAddon.getVars(element.handle);
-    const result: NetlistItem[] = [];
-    for (const variable of vars) {
-      const v = createVar(
-        variable.name,
-        variable.type,
-        variable.width,
-        variable.file,
-        variable.line,
-        variable.column,
-        element.moduleName,
-        "varItem",
-        element,
-      );
-      if (variable.constValue !== undefined) {
-        v.description = `= ${variable.constValue}`;
-      }
-      result.push(v);
-    }
-    return result;
-  }
-
-  public async getDriversAndLoadsExternal(element: NetlistItem): Promise<void> {
-    return;
-  }
-
-  private async loadModuleDefs() {
-    const moduleDefs = await this.uhdmAddon.getModuleDefs(this.designId);
-    for (const moduleDef of moduleDefs) {
-      // console.log(`Loaded module definition: ${moduleDef.defName} (${moduleDef.file}:${moduleDef.line})`);
-      const defName = moduleDef.defName.replace("work@", ""); // remove prefix for UHDM
-      const scope = createScope(
-        defName,
-        moduleDef.type,
-        moduleDef.file,
-        moduleDef.line,
-        moduleDef.column,
-        defName,
-        "moduleDefItem",
-        undefined,
-        moduleDef.handle,
-      );
-      scope.description = `${moduleDef.size}`;
-      this.moduleInstances.push(scope);
-    }
-  }
-
-  public async getModuleInstancesExternal(
-    element: NetlistItem | undefined,
-  ): Promise<NetlistItem[]> {
-    if (!element) {
-      return this.moduleInstances;
-    }
-    if (element.children.length > 0) {
-      return element.children; // Returns cached children
-    }
-    element.children = await this.loadModuleInstances(element);
-    return element.children;
-  }
-
-  private async loadModuleInstances(
-    element: NetlistItem,
-  ): Promise<NetlistItem[]> {
-    const moduleName = "work@" + element.moduleName; // add prefix for UHDM
-    const instances = await this.uhdmAddon.getModuleInstances(
-      this.designId,
-      moduleName,
-    );
-    const result: NetlistItem[] = [];
-    for (const instance of instances) {
-      const scope = createScope(
-        instance.fullName,
-        instance.type,
-        instance.file,
-        instance.line,
-        instance.column,
-        instance.name,
-        "instanceItem",
-        element,
-        undefined,
-      );
-      // scope.description = instance.name;
-      result.push(scope);
-    }
-    return result;
-  }
-
-  async getDefinitionFileLocation(
-    element: NetlistItem,
-  ): Promise<{ filePath: string; lineNumber: number; columnNumber: number }> {
-    let filePath = element.sourceFile;
-    let lineNumber = element.lineNumber;
-    let columnNumber = element.columnNumber;
-
-    if (element.contextValue === "scopeItem") {
-      // Only need to get moduleDef for non-top-module, as sourceFile and lineNumber for top-module is already correct
-      if (element.parent) {
-        const moduleDef = await this.uhdmAddon.getModuleDef(element.handle);
-        if (!moduleDef.file) {
-          // Might happen when vpiDefFile not found because of UHDM bug
-          vscode.window.showWarningMessage(
-            "UHDM: definition not found for " +
-              element.moduleName +
-              ". Please try to select a variable under it as workaround.",
-          );
-        }
-        filePath = moduleDef.file;
-        lineNumber = moduleDef.line;
-        columnNumber = moduleDef.column;
-      }
-    } else if (element.contextValue === "instanceItem") {
-      // The parent of instanceItem is the moduleDefItem, so use its sourceFile and lineNumber
-      filePath = element.parent!.sourceFile;
-      lineNumber = element.parent!.lineNumber;
-      columnNumber = element.parent!.columnNumber;
-    }
-
-    return { filePath, lineNumber, columnNumber };
-  }
-
-  public async unload(): Promise<void> {
-    this.unloadTreeData();
-    await this.uhdmAddon.unloadDesign(this.designId);
-  }
-}
-
 function parseSlangType(typeDecl: string): {
   direction: string | null;
   type: string | null;
@@ -1777,183 +1240,44 @@ class SlangDesignItem extends DesignItem {
 
 // #region FDesignItem
 class FDesignItem extends DesignItem {
-  private delegateDesign!: DesignItem;
-  private generatedUhdmUri?: vscode.Uri; // For generated UHDM file from Surelog
+  private delegateDesign: SlangDesignItem;
 
-  private static surelogOutputChannel: vscode.OutputChannel | undefined;
-
-  public async load(): Promise<boolean> {
-    const config = vscode.workspace.getConfiguration("sv-pathfinder");
-    const compiler = config.get<string>("compiler");
-    if (compiler === "slang-server") {
-      return await this.loadSlang();
-    }
-    return await this.loadSurelog();
+  constructor(
+    filePath: string,
+    isExample: boolean,
+    collapsibleState?: vscode.TreeItemCollapsibleState,
+  ) {
+    super(filePath, isExample, collapsibleState);
+    this.delegateDesign = new SlangDesignItem(filePath, isExample);
   }
 
-  private async loadSlang(): Promise<boolean> {
-    this.delegateDesign = new SlangDesignItem(
-      this.resourceUri.fsPath,
-      this.isExample,
-    );
-    // Defer loading to setActiveDesign, that means we recompile every time user switch designs
-    // slangfixme
-    // await this.delegateDesign.load();
+  public async load(): Promise<boolean> {
+    await this.delegateDesign.load();
     this.treeData = this.delegateDesign.getTreeData();
+    this.moduleInstances = this.delegateDesign.getModuleInstances();
     return true;
   }
 
-  private async runSurelog(): Promise<boolean> {
-    const config = vscode.workspace.getConfiguration("sv-pathfinder");
-    let surelogPath = config.get<string>("surelogPath") || "surelog";
-
-    // Verify Surelog exists
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const verifyProc = cp.spawn(surelogPath, ["--version"]);
-        verifyProc.on("error", reject);
-        verifyProc.on("close", (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`Surelog verification failed with code ${code}`));
-          }
-        });
-      });
-    } catch (error) {
-      vscode.window.showErrorMessage(
-        'Surelog not found or failed to execute. Please install Surelog or set "sv-pathfinder.surelogPath" in settings.',
-      );
-      return false;
-    }
-
-    const uuid = crypto.randomUUID();
-    const tempDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), `sv-pathfinder-${uuid}-`),
-    );
-
-    // Create an output channel for Surelog logs
-    if (!FDesignItem.surelogOutputChannel) {
-      FDesignItem.surelogOutputChannel =
-        vscode.window.createOutputChannel("Surelog Output");
-    }
-
-    // Prepare Surelog arguments
-    const args = [
-      "-f",
-      this.resourceUri.fsPath,
-      "-odir",
-      tempDir,
-      "-parse",
-      "-sverilog",
-      "-d",
-      "uhdm",
-      "-elabuhdm", // Optional
-    ];
-
-    // Spawn Surelog process
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const flistDir = path.dirname(this.resourceUri.fsPath);
-        const proc = cp.spawn(surelogPath, args, {
-          cwd: flistDir,
-          shell: true, // For PATH resolution if needed
-        });
-
-        proc.stdout.on("data", (data) =>
-          FDesignItem.surelogOutputChannel!.append(data.toString()),
-        );
-        proc.stderr.on("data", (data) =>
-          FDesignItem.surelogOutputChannel!.append(data.toString()),
-        );
-
-        proc.on("error", reject);
-        proc.on("close", (code) => {
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(
-              new Error(
-                `Surelog exited with code ${code}. Check "Surelog Output" channel for details.`,
-              ),
-            );
-          }
-        });
-      });
-
-      // Verify generated UHDM file exists
-      const uhdmPath = path.join(tempDir, "slpp_all", "surelog.uhdm");
-      await fs.access(uhdmPath);
-      // console.log(`UHDM file generated at: ${uhdmPath}`);
-
-      this.generatedUhdmUri = vscode.Uri.file(uhdmPath);
-      return true;
-    } catch (error) {
-      vscode.window.showErrorMessage(
-        `Failed to generate UHDM: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      FDesignItem.surelogOutputChannel.show(true);
-      // Optional: Clean up tempDir on failure
-      try {
-        await fs.rm(tempDir, { recursive: true, force: true });
-      } catch {}
-      return false;
-    }
-  }
-
-  private async loadSurelog(): Promise<boolean> {
-    // Run Surelog to generate UHDM
-    const success = await this.runSurelog();
-    if (!success) {
-      return false;
-    }
-    try {
-      // Create and load the delegate design
-      this.delegateDesign = new UhdmDesignItem(
-        this.generatedUhdmUri!.fsPath,
-        this.isExample,
-      );
-      const success = await this.delegateDesign.load();
-      if (success) {
-        // Load the top modules from the generated design
-        this.treeData = this.delegateDesign.getTreeData();
-        return true;
-      } else {
-        return false;
-      }
-    } catch (error) {
-      // Optional: Clean up tempDir on failure
-      const tempDir = path.dirname(path.dirname(this.generatedUhdmUri!.fsPath)); // Assuming /tempDir/slpp_all/surelog.uhdm
-      try {
-        await fs.rm(tempDir, { recursive: true, force: true });
-      } catch {}
-      return false;
-    }
-  }
-
-  // tree data and module instances are from delegate design
   public getTreeData(): NetlistItem[] {
     return this.delegateDesign.getTreeData();
   }
+
   public getModuleInstances(): NetlistItem[] {
     return this.delegateDesign.getModuleInstances();
   }
-  public get DelegateDesign(): DesignItem {
+
+  public get DelegateDesign(): SlangDesignItem {
     return this.delegateDesign;
   }
 
   public async getChildrenExternal(
     element: NetlistItem | undefined,
   ): Promise<NetlistItem[]> {
-    if (!element) {
-      return this.treeData; // Returns top-level netlist items
-    }
-    await this.delegateDesign.getChildrenExternal(element);
-    return element.children;
+    return this.delegateDesign.getChildrenExternal(element);
   }
 
   public async getDriversAndLoadsExternal(element: NetlistItem): Promise<void> {
-    return;
+    return this.delegateDesign.getDriversAndLoadsExternal(element);
   }
 
   public async getModuleInstancesExternal(
@@ -1962,7 +1286,7 @@ class FDesignItem extends DesignItem {
     return this.delegateDesign.getModuleInstancesExternal(element);
   }
 
-  async getDefinitionFileLocation(
+  public async getDefinitionFileLocation(
     element: NetlistItem,
   ): Promise<{ filePath: string; lineNumber: number; columnNumber: number }> {
     return this.delegateDesign.getDefinitionFileLocation(element);
@@ -1971,14 +1295,6 @@ class FDesignItem extends DesignItem {
   public async unload(): Promise<void> {
     this.unloadTreeData();
     await this.delegateDesign.unload();
-    // Clean up temp files
-    if (this.generatedUhdmUri) {
-      const tempDir = path.dirname(path.dirname(this.generatedUhdmUri.fsPath)); // Assuming /tempDir/slpp_all/surelog.uhdm
-      try {
-        await fs.rm(tempDir, { recursive: true, force: true });
-      } catch {}
-      this.generatedUhdmUri = undefined; // Clear the URI after cleanup
-    }
   }
 }
 
@@ -2039,33 +1355,36 @@ export class OpenedDesignsTreeProvider implements vscode.TreeDataProvider<vscode
   }
 
   private async addDesign(designPath: string, isExample: boolean = false) {
-    let index = this.designList.findIndex(
+    const index = this.designList.findIndex(
       (design) => design.resourceUri.fsPath === designPath,
     );
-    if (index < 0) {
-      const fileType = designPath.split(".").pop()?.toLocaleLowerCase() || "";
-      let design: DesignItem;
-      if (fileType === "uhdm") {
-        design = new UhdmDesignItem(designPath, isExample);
-      } else if (fileType === "f") {
-        design = new FDesignItem(designPath, false /*isExample*/);
-      } else {
-        design = new KuzuDesignItem(designPath, false /*isExample*/);
-      }
-      const success = await design.load();
-      if (success) {
-        this.designList.push(design);
-        // If it's the first design, select it
-        if (this.designList.length === 1) {
-          await this.selectDesign(design);
-        }
-      }
-    } else {
-      // this.designList[index] = database;
-      // reveal the design
+
+    if (index >= 0) {
+      this.refresh();
+      return;
     }
+
+    const fileType = designPath.split(".").pop()?.toLocaleLowerCase() || "";
+
+    if (fileType !== "f") {
+      vscode.window.showErrorMessage(
+        "sv-pathfinder now supports .f design file lists through slang-server only.",
+      );
+      return;
+    }
+
+    const design: DesignItem = new SlangDesignItem(designPath, isExample);
+    const success = await design.load();
+
+    if (success) {
+      this.designList.push(design);
+
+      if (this.designList.length === 1) {
+        await this.selectDesign(design);
+      }
+    }
+
     this.refresh();
-    // return this.designList.length;
   }
 
   public async closeDesign(element: DesignItem) {
@@ -2090,16 +1409,10 @@ export class OpenedDesignsTreeProvider implements vscode.TreeDataProvider<vscode
 
     // slangfixme
     if (this.activeDesign === element) {
-      if (
-        element instanceof FDesignItem &&
-        element.DelegateDesign instanceof SlangDesignItem
-      ) {
-        // Force re-select to reload Slang design. This is because we defer loading
-        // to setActiveDesign, so need to re-trigger it here.
-        this.activeDesign = undefined;
-        await this.hierarchyTreeProvider.setActiveDesign(undefined);
-        await this.selectDesign(element);
-      }
+      this.activeDesign = undefined;
+      await this.hierarchyTreeProvider.setActiveDesign(undefined);
+      await this.moduleInstancesTreeProvider.setActiveDesign(undefined);
+      await this.selectDesign(element);
     }
 
     this.hierarchyTreeProvider.refreshDesign(element);
@@ -2154,30 +1467,16 @@ export class OpenedDesignsTreeProvider implements vscode.TreeDataProvider<vscode
 
     await this.hierarchyTreeProvider.setActiveDesign(element);
     await this.moduleInstancesTreeProvider.setActiveDesign(element);
-    if (element instanceof UhdmDesignItem || element instanceof FDesignItem) {
-      // Hide the not used views for UHDM designs
-      vscode.commands.executeCommand(
-        "setContext",
-        "sv-pathfinder.driversViewVisible",
-        false,
-      );
-      vscode.commands.executeCommand(
-        "setContext",
-        "sv-pathfinder.loadsViewVisible",
-        false,
-      );
-    } else {
-      vscode.commands.executeCommand(
-        "setContext",
-        "sv-pathfinder.driversViewVisible",
-        true,
-      );
-      vscode.commands.executeCommand(
-        "setContext",
-        "sv-pathfinder.loadsViewVisible",
-        true,
-      );
-    }
+    vscode.commands.executeCommand(
+      "setContext",
+      "sv-pathfinder.driversViewVisible",
+      false,
+    );
+    vscode.commands.executeCommand(
+      "setContext",
+      "sv-pathfinder.loadsViewVisible",
+      false,
+    );
     this.refresh();
   }
 
@@ -2726,9 +2025,10 @@ export class HierarchyTreeProvider implements vscode.TreeDataProvider<NetlistIte
 
     // Add to waveform viewer
     for (const instancePath of instancePaths) {
+      const waveformPath = `TOP.${instancePath}`;
       vscode.commands.executeCommand("waveformViewer.addVariable", {
         uri: waveformUri.toString(),
-        instancePath: instancePath,
+        instancePath: waveformPath,
       });
     }
   }

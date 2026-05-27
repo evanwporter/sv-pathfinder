@@ -35,7 +35,7 @@ async function main() {
     sourcesContent: false,
     platform: "node",
     outfile: "dist/extension.js",
-    external: ["vscode", "../build/Release/uhdm_addon.node", "web-tree-sitter"], // add 'kuzu'?
+    external: ["vscode", "web-tree-sitter"], // add 'kuzu'?
     logLevel: "silent",
     plugins: [
       /* add to the end of plugins array */
