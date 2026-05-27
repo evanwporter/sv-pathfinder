@@ -1,6 +1,6 @@
 {
   "variables": {
-    "UHDM_HOME": "/home/heyfey/git-repos/UHDM-1.84/build", # /path/to/uhdm
+    "UHDM_HOME": "/home/evanw/Surelog-1.84/build/third_party/UHDM", # /path/to/uhdm
   },
   "targets": [
     {
