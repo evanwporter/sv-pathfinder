@@ -12,7 +12,7 @@
 #include <vector>
 
 // Utility function to log messages to the JavaScript console
-void LogToConsole(const Napi::Env& env, const std::string& message) {
+void LogToConsole(const Napi::Env &env, const std::string &message) {
   Napi::Object global = env.Global();
   Napi::Value console = global.Get("console");
   if (console.IsObject()) {
@@ -25,49 +25,49 @@ void LogToConsole(const Napi::Env& env, const std::string& message) {
   }
 }
 
-std::string RepeatString(const std::string& str, int count) {
+std::string RepeatString(const std::string &str, int count) {
   return std::string(count, '  ') + str;
 }
 
 std::string getScopeTypeString(int scope_type) {
   switch (scope_type) {
-    case vpiModule:
-      return "Module";
-    case vpiModuleArray:
-      return "ModuleArray";
-    case vpiInterface:
-      return "Interface";
-    case vpiProgram:
-      return "Program";
-    case vpiGenScope:
-      return "Generate";
-    case vpiGenScopeArray:
-      return "Generate";
-    case vpiTask:
-      return "Task";
-    case vpiFunction:
-      return "Function";
-    case vpiModport:
-      return "Modport";
-    case vpiClockingBlock:
-      return "ClockingBlock";
-    case vpiInterfaceArray:
-      return "InterfaceArray";
-    case vpiProgramArray:
-      return "ProgramArray";
-    default:
-      return std::to_string(scope_type);
+  case vpiModule:
+    return "Module";
+  case vpiModuleArray:
+    return "ModuleArray";
+  case vpiInterface:
+    return "Interface";
+  case vpiProgram:
+    return "Program";
+  case vpiGenScope:
+    return "Generate";
+  case vpiGenScopeArray:
+    return "Generate";
+  case vpiTask:
+    return "Task";
+  case vpiFunction:
+    return "Function";
+  case vpiModport:
+    return "Modport";
+  case vpiClockingBlock:
+    return "ClockingBlock";
+  case vpiInterfaceArray:
+    return "InterfaceArray";
+  case vpiProgramArray:
+    return "ProgramArray";
+  default:
+    return std::to_string(scope_type);
   }
 }
 
 // Wrapper class for vpiHandle
 class VpiHandleWrap : public Napi::ObjectWrap<VpiHandleWrap> {
- public:
+public:
   // Factory method to create a new instance from a vpiHandle
   static Napi::Object New(Napi::Env env, vpiHandle handle) {
-    Napi::Object obj = constructor.New({});  // Create JS object
-    VpiHandleWrap* wrapper = Unwrap(obj);    // Get C++ instance
-    wrapper->handle_ = handle;               // Set the handle
+    Napi::Object obj = constructor.New({}); // Create JS object
+    VpiHandleWrap *wrapper = Unwrap(obj);   // Get C++ instance
+    wrapper->handle_ = handle;              // Set the handle
     return obj;
   }
 
@@ -75,11 +75,11 @@ class VpiHandleWrap : public Napi::ObjectWrap<VpiHandleWrap> {
   static void Init(Napi::Env env) {
     Napi::Function func = DefineClass(env, "VpiHandle", {});
     constructor = Napi::Persistent(func);
-    constructor.SuppressDestruct();  // Keep constructor alive
+    constructor.SuppressDestruct(); // Keep constructor alive
   }
 
   // Constructor: Called by Napi when creating the JS object
-  VpiHandleWrap(const Napi::CallbackInfo& info)
+  VpiHandleWrap(const Napi::CallbackInfo &info)
       : Napi::ObjectWrap<VpiHandleWrap>(info), handle_(nullptr) {}
 
   // Destructor: Release the handle when the JS object is garbage collected
@@ -95,10 +95,10 @@ class VpiHandleWrap : public Napi::ObjectWrap<VpiHandleWrap> {
   // Public method to get the handle
   vpiHandle GetHandle() const { return handle_; }
 
- private:
-  vpiHandle handle_;  // The stored UHDM handle
+private:
+  vpiHandle handle_; // The stored UHDM handle
   static Napi::FunctionReference
-      constructor;  // Persistent constructor reference
+      constructor; // Persistent constructor reference
 };
 
 // Define the static member
@@ -141,10 +141,9 @@ std::mutex designContextMapMutex;
 
 // Worker for LoadDesign
 class LoadDesignWorker : public Napi::AsyncWorker {
- public:
+public:
   LoadDesignWorker(Napi::Promise::Deferred deferred, std::string filename)
-      : Napi::AsyncWorker(deferred.Env()),
-        deferred(deferred),
+      : Napi::AsyncWorker(deferred.Env()), deferred(deferred),
         filename(filename) {}
 
   void Execute() override {
@@ -155,7 +154,7 @@ class LoadDesignWorker : public Napi::AsyncWorker {
       return;
     }
 
-    design = restoredDesigns[0];  // Only consider the first design
+    design = restoredDesigns[0]; // Only consider the first design
     if (!vpi_get(vpiElaborated, design)) {
       elaboratorContext = new UHDM::ElaboratorContext(serializer.get());
       elaboratorContext->m_elaborator.listenDesigns(restoredDesigns);
@@ -179,18 +178,18 @@ class LoadDesignWorker : public Napi::AsyncWorker {
     deferred.Resolve(Napi::Number::New(env, designId));
   }
 
- private:
+private:
   Napi::Promise::Deferred deferred;
   std::string filename;
   std::unique_ptr<UHDM::Serializer> serializer;
   std::vector<vpiHandle> restoredDesigns;
   vpiHandle design = nullptr;
-  UHDM::ElaboratorContext* elaboratorContext = nullptr;
+  UHDM::ElaboratorContext *elaboratorContext = nullptr;
   int designId = -1;
 };
 
 // Function to load UHDM design (now async)
-Napi::Value LoadDesign(const Napi::CallbackInfo& info) {
+Napi::Value LoadDesign(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
   if (info.Length() < 1 || !info[0].IsString()) {
@@ -204,17 +203,16 @@ Napi::Value LoadDesign(const Napi::CallbackInfo& info) {
   std::string filename = info[0].As<Napi::String>().Utf8Value();
   Napi::Promise::Deferred deferred = Napi::Promise::Deferred::New(env);
 
-  LoadDesignWorker* worker = new LoadDesignWorker(deferred, filename);
+  LoadDesignWorker *worker = new LoadDesignWorker(deferred, filename);
   worker->Queue();
 
   return deferred.Promise();
 }
 
 class GetModuleDefsWorker : public Napi::AsyncWorker {
- public:
+public:
   GetModuleDefsWorker(Napi::Promise::Deferred deferred, int designId)
-      : Napi::AsyncWorker(deferred.Env()),
-        deferred(deferred),
+      : Napi::AsyncWorker(deferred.Env()), deferred(deferred),
         designId(designId) {}
 
   void Execute() override {
@@ -236,12 +234,12 @@ class GetModuleDefsWorker : public Napi::AsyncWorker {
     dc->moduleDefContextMap.clear();
     dc->instContextMap.clear();
 
-    auto TraverseAndCollect = [&](auto& self, vpiHandle scopeHandle) -> void {
+    auto TraverseAndCollect = [&](auto &self, vpiHandle scopeHandle) -> void {
       int scope_type = vpi_get(vpiType, scopeHandle);
 
       if (scope_type == vpiModule || scope_type == vpiInterface ||
           scope_type == vpiProgram) {
-        const char* def_name_c = vpi_get_str(vpiDefName, scopeHandle);
+        const char *def_name_c = vpi_get_str(vpiDefName, scopeHandle);
         if (def_name_c) {
           std::string def_name = def_name_c;
 
@@ -309,8 +307,8 @@ class GetModuleDefsWorker : public Napi::AsyncWorker {
     // Build the result array of module definitions
     Napi::Array result = Napi::Array::New(env);
     uint32_t index = 0;
-    for (const auto& pair : dc->moduleDefContextMap) {
-      const moduleDefContext& ctx = pair.second;
+    for (const auto &pair : dc->moduleDefContextMap) {
+      const moduleDefContext &ctx = pair.second;
       Napi::Object obj = Napi::Object::New(env);
       obj.Set("defName", ctx.name);
       obj.Set("type", ctx.type);
@@ -323,15 +321,15 @@ class GetModuleDefsWorker : public Napi::AsyncWorker {
     deferred.Resolve(result);
   }
 
- private:
+private:
   Napi::Promise::Deferred deferred;
   int designId;
-  DesignContext* dc = nullptr;
+  DesignContext *dc = nullptr;
   vpiHandle design = nullptr;
 };
 
 // Wrap getModuleDefs (now async)
-Napi::Value GetModuleDefs(const Napi::CallbackInfo& info) {
+Napi::Value GetModuleDefs(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
   if (info.Length() < 1 || !info[0].IsNumber()) {
@@ -345,14 +343,14 @@ Napi::Value GetModuleDefs(const Napi::CallbackInfo& info) {
   int designId = info[0].As<Napi::Number>().Int32Value();
   Napi::Promise::Deferred deferred = Napi::Promise::Deferred::New(env);
 
-  GetModuleDefsWorker* worker = new GetModuleDefsWorker(deferred, designId);
+  GetModuleDefsWorker *worker = new GetModuleDefsWorker(deferred, designId);
   worker->Queue();
 
   return deferred.Promise();
 }
 
 // Wrap getTopModules
-Napi::Value GetTopModules(const Napi::CallbackInfo& info) {
+Napi::Value GetTopModules(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   // Check if there is at least one argument and it’s a number (design ID)
   if (info.Length() < 1 || !info[0].IsNumber()) {
@@ -386,10 +384,12 @@ Napi::Value GetTopModules(const Napi::CallbackInfo& info) {
 
   while (vpiHandle obj_h = vpi_scan(iter)) {
     Napi::Object module = Napi::Object::New(env);
-    if (const char* s = vpi_get_str(vpiDefName, obj_h))
+    if (const char *s = vpi_get_str(vpiDefName, obj_h))
       module.Set("defName", s);
-    if (const char* s = vpi_get_str(vpiName, obj_h)) module.Set("name", s);
-    if (const char* s = vpi_get_str(vpiFile, obj_h)) module.Set("file", s);
+    if (const char *s = vpi_get_str(vpiName, obj_h))
+      module.Set("name", s);
+    if (const char *s = vpi_get_str(vpiFile, obj_h))
+      module.Set("file", s);
     module.Set("line", vpi_get(vpiLineNo, obj_h));
     module.Set("column", vpi_get(vpiColumnNo, obj_h));
     module.Set("handle", VpiHandleWrap::New(env, obj_h));
@@ -402,8 +402,8 @@ Napi::Value GetTopModules(const Napi::CallbackInfo& info) {
   return result;
 }
 
-void CollectSubScopes(const Napi::CallbackInfo& info,
-                      const vpiHandle& scopeHandle, Napi::Array& result,
+void CollectSubScopes(const Napi::CallbackInfo &info,
+                      const vpiHandle &scopeHandle, Napi::Array &result,
                       int level, bool isFromGenScopeArray = false) {
   Napi::Env env = info.Env();
   std::vector<int> types = {vpiModule,         /*vpiModuleArray,*/ vpiGenScope,
@@ -447,20 +447,20 @@ void CollectSubScopes(const Napi::CallbackInfo& info,
         }
 
         Napi::Object scope = Napi::Object::New(env);
-        if (const char* s = vpi_get_str(vpiDefName, obj_h))
+        if (const char *s = vpi_get_str(vpiDefName, obj_h))
           scope.Set("defName", s);
         else
           scope.Set("defName", "");
 
-        if (const char* s = vpi_get_str(vpiFullName, obj_h))
+        if (const char *s = vpi_get_str(vpiFullName, obj_h))
           scope.Set("name", s);
-        else {  // If FullName is not available, use Name e.g. modport
+        else { // If FullName is not available, use Name e.g. modport
           scope.Set("name", vpi_get_str(vpiName, obj_h)
                                 ? vpi_get_str(vpiName, obj_h)
                                 : "unnamed");
         }
 
-        if (const char* s = vpi_get_str(vpiFile, obj_h))
+        if (const char *s = vpi_get_str(vpiFile, obj_h))
           scope.Set("file", s);
         else
           scope.Set("file", "");
@@ -475,12 +475,12 @@ void CollectSubScopes(const Napi::CallbackInfo& info,
         // Do not release here as VpiHandleWrap will manage it
         // vpi_release_handle(obj_h);
       }
-      vpi_release_handle(iter);  // Release the iterator handle
+      vpi_release_handle(iter); // Release the iterator handle
     }
   }
 }
 
-Napi::Value GetSubScopes(const Napi::CallbackInfo& info) {
+Napi::Value GetSubScopes(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
   // Check if there is at least one argument, it’s an object, and it’s an
@@ -493,7 +493,7 @@ Napi::Value GetSubScopes(const Napi::CallbackInfo& info) {
   }
 
   // Unwrap the VpiHandleWrap object to get the C++ instance
-  VpiHandleWrap* wrap = VpiHandleWrap::Unwrap(info[0].As<Napi::Object>());
+  VpiHandleWrap *wrap = VpiHandleWrap::Unwrap(info[0].As<Napi::Object>());
   vpiHandle scopeHandle = wrap->GetHandle();
 
   // If the handle is null, return an empty array
@@ -507,7 +507,7 @@ Napi::Value GetSubScopes(const Napi::CallbackInfo& info) {
   return result;
 }
 
-Napi::Value GetVars(const Napi::CallbackInfo& info) {
+Napi::Value GetVars(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
   // Validate input: Expecting a single VpiHandleWrap argument
@@ -519,7 +519,7 @@ Napi::Value GetVars(const Napi::CallbackInfo& info) {
   }
 
   // Unwrap the VpiHandleWrap to access the vpiHandle
-  VpiHandleWrap* wrap = VpiHandleWrap::Unwrap(info[0].As<Napi::Object>());
+  VpiHandleWrap *wrap = VpiHandleWrap::Unwrap(info[0].As<Napi::Object>());
   vpiHandle scopeHandle = wrap->GetHandle();
 
   // Create an array to hold variable information
@@ -527,67 +527,67 @@ Napi::Value GetVars(const Napi::CallbackInfo& info) {
   uint32_t index = 0;
 
   // Helper lambda to collect variables of a specific type
-  auto collectVars = [&](int type, const std::string& typeName) {
+  auto collectVars = [&](int type, const std::string &typeName) {
     vpiHandle iter = vpi_iterate(type, scopeHandle);
     if (iter) {
       while (vpiHandle obj_h = vpi_scan(iter)) {
         Napi::Object var = Napi::Object::New(env);
         var.Set("type", typeName);
-        if (const char* name = vpi_get_str(vpiFullName, obj_h)) {
+        if (const char *name = vpi_get_str(vpiFullName, obj_h)) {
           var.Set("name", name);
-        } else {  // If FullName is not available, use Name e.g. vars in modport
+        } else { // If FullName is not available, use Name e.g. vars in modport
           var.Set("name", vpi_get_str(vpiName, obj_h)
                               ? vpi_get_str(vpiName, obj_h)
                               : "unnamed");
         }
-        if (const char* file = vpi_get_str(vpiFile, obj_h)) {
+        if (const char *file = vpi_get_str(vpiFile, obj_h)) {
           var.Set("file", file);
         }
         var.Set("line", vpi_get(vpiLineNo, obj_h));
         var.Set("column", vpi_get(vpiColumnNo, obj_h));
-        var.Set("width", vpi_get(vpiSize, obj_h));  // Not working now
+        var.Set("width", vpi_get(vpiSize, obj_h)); // Not working now
 
         // Get constant value for parameters
         if (type == vpiParameter) {
           s_vpi_value val;
           vpi_get_value(obj_h, &val);
           switch (val.format) {
-            case vpiIntVal:
-            case vpiUIntVal:
-            case vpiShortIntVal:
-            case vpiLongIntVal:
-              var.Set("constValue", static_cast<int>(val.value.integer));
-              break;
-            case vpiRealVal:
-            case vpiShortRealVal:
-              var.Set("constValue", static_cast<float>(val.value.real));
-              break;
-            case vpiStringVal:
-            case vpiBinStrVal:
-            case vpiOctStrVal:
-            case vpiDecStrVal:
-            case vpiHexStrVal:
-              var.Set("constValue", std::string(val.value.str));
-              break;
-            case vpiScalarVal:
-            case vpiVectorVal:
-            case vpiStrengthVal:
-            case vpiTimeVal:
-            case vpiObjTypeVal:
-            case vpiSuppressVal:
-            case vpiRawTwoStateVal:
-            case vpiRawFourStateVal:
-              // Not handled currently
-              break;
-            default:
-              break;
+          case vpiIntVal:
+          case vpiUIntVal:
+          case vpiShortIntVal:
+          case vpiLongIntVal:
+            var.Set("constValue", static_cast<int>(val.value.integer));
+            break;
+          case vpiRealVal:
+          case vpiShortRealVal:
+            var.Set("constValue", static_cast<float>(val.value.real));
+            break;
+          case vpiStringVal:
+          case vpiBinStrVal:
+          case vpiOctStrVal:
+          case vpiDecStrVal:
+          case vpiHexStrVal:
+            var.Set("constValue", std::string(val.value.str));
+            break;
+          case vpiScalarVal:
+          case vpiVectorVal:
+          case vpiStrengthVal:
+          case vpiTimeVal:
+          case vpiObjTypeVal:
+          case vpiSuppressVal:
+          case vpiRawTwoStateVal:
+          case vpiRawFourStateVal:
+            // Not handled currently
+            break;
+          default:
+            break;
           }
         }
 
         result.Set(index++, var);
-        vpi_release_handle(obj_h);  // Clean up object handle
+        vpi_release_handle(obj_h); // Clean up object handle
       }
-      vpi_release_handle(iter);  // Clean up iterator handle
+      vpi_release_handle(iter); // Clean up iterator handle
     }
   };
 
@@ -609,7 +609,7 @@ Napi::Value GetVars(const Napi::CallbackInfo& info) {
   return result;
 }
 
-Napi::Value GetModuleDef(const Napi::CallbackInfo& info) {
+Napi::Value GetModuleDef(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
   // Validate input: Expecting a single VpiHandleWrap argument
@@ -621,22 +621,22 @@ Napi::Value GetModuleDef(const Napi::CallbackInfo& info) {
   }
 
   // Unwrap the VpiHandleWrap to access the vpiHandle
-  VpiHandleWrap* wrap = VpiHandleWrap::Unwrap(info[0].As<Napi::Object>());
+  VpiHandleWrap *wrap = VpiHandleWrap::Unwrap(info[0].As<Napi::Object>());
   vpiHandle instHandle = wrap->GetHandle();
 
   Napi::Object result = Napi::Object::New(env);
-  if (const char* s = vpi_get_str(vpiDefName, instHandle))
+  if (const char *s = vpi_get_str(vpiDefName, instHandle))
     result.Set("defName", s);
-  if (const char* s = vpi_get_str(vpiDefFile, instHandle))
+  if (const char *s = vpi_get_str(vpiDefFile, instHandle))
     result.Set("file", s);
   result.Set("line", vpi_get(vpiDefLineNo, instHandle));
-  result.Set("column", 0);  // No vpiDefColumnNo available
+  result.Set("column", 0); // No vpiDefColumnNo available
 
   return result;
 }
 
 // Wrap getModuleInstances
-Napi::Value GetModuleInstances(const Napi::CallbackInfo& info) {
+Napi::Value GetModuleInstances(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
   if (info.Length() < 2 || !info[0].IsNumber() || !info[1].IsString()) {
@@ -658,24 +658,24 @@ Napi::Value GetModuleInstances(const Napi::CallbackInfo& info) {
       return Napi::Array::New(env);
     }
 
-    DesignContext& dc = it->second;
+    DesignContext &dc = it->second;
 
     auto instIt = dc.instContextMap.find(moduleDefName);
     if (instIt == dc.instContextMap.end()) {
       return Napi::Array::New(env);
     }
-    instances = instIt->second;  // Copy to local vector
+    instances = instIt->second; // Copy to local vector
   }
 
   // Sort by fullName
   std::sort(instances.begin(), instances.end(),
-            [](const instContext& a, const instContext& b) {
+            [](const instContext &a, const instContext &b) {
               return a.fullName < b.fullName;
             });
 
   Napi::Array result = Napi::Array::New(env);
   uint32_t index = 0;
-  for (const auto& inst : instances) {
+  for (const auto &inst : instances) {
     Napi::Object obj = Napi::Object::New(env);
     obj.Set("fullName", inst.fullName);
     obj.Set("name", inst.name);
@@ -689,7 +689,7 @@ Napi::Value GetModuleInstances(const Napi::CallbackInfo& info) {
   return result;
 }
 
-Napi::Value UnloadDesign(const Napi::CallbackInfo& info) {
+Napi::Value UnloadDesign(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
   // Validate input: Expecting a single number argument (design ID)
@@ -713,7 +713,7 @@ Napi::Value UnloadDesign(const Napi::CallbackInfo& info) {
   // Release the design handle if it exists
   if (it->second.design) {
     vpi_release_handle(it->second.design);
-    it->second.design = nullptr;  // Set to null after releasing
+    it->second.design = nullptr; // Set to null after releasing
   }
 
   // Remove the design context from the map
@@ -725,7 +725,7 @@ Napi::Value UnloadDesign(const Napi::CallbackInfo& info) {
 
 // Initialize the addon
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
-  VpiHandleWrap::Init(env);  // Set up the VpiHandleWrap class
+  VpiHandleWrap::Init(env); // Set up the VpiHandleWrap class
   exports.Set("loadDesign", Napi::Function::New(env, LoadDesign));
   exports.Set("unloadDesign", Napi::Function::New(env, UnloadDesign));
   exports.Set("getTopModules", Napi::Function::New(env, GetTopModules));

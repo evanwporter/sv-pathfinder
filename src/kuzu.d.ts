@@ -3,4 +3,4 @@
 //     export = kuzu;
 // }
 
-declare module 'kuzu';
+declare module "kuzu";
